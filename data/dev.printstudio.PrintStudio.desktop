@@ -2,9 +2,9 @@
 Type=Application
 Name=Print Studio
 GenericName=Print Dialog
-Comment=Print anything with reverse order, collation, n-up, manual two-sided and more
+Comment=Print anything with reverse order, collation, n-up, booklets, manual two-sided and more
 Exec=@BIN@ %f
-Icon=printer
+Icon=dev.printstudio.PrintStudio
 Terminal=false
 Categories=Utility;Office;
 StartupWMClass=dev.printstudio.PrintStudio

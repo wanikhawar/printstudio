@@ -1,5 +1,6 @@
 //! The GTK4 / libadwaita interface.
 
+mod art;
 mod palette;
 mod thumbs;
 mod viewer;
@@ -11,6 +12,7 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use printstudio::spool::SpoolJob;
+use window::Incoming;
 
 pub const APP_ID: &str = "dev.printstudio.PrintStudio";
 
@@ -107,29 +109,103 @@ fn load_css() {
     }
 }
 
-pub fn run(file: Option<PathBuf>, spool: Option<SpoolJob>) -> glib::ExitCode {
+/// Make the app icon available when running from the source tree too.
+fn add_icon_path() {
+    let Some(display) = gdk::Display::default() else { return };
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data").join("icons");
+    if dir.is_dir() {
+        gtk::IconTheme::for_display(&display).add_search_path(dir);
+    }
+    gtk::Window::set_default_icon_name(APP_ID);
+}
+
+const SHORTCUTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkShortcutsWindow" id="shortcuts">
+    <property name="modal">1</property>
+    <child>
+      <object class="GtkShortcutsSection">
+        <property name="section-name">main</property>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Printing</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Print</property><property name="accelerator">&lt;Control&gt;p</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Add a document</property><property name="accelerator">&lt;Control&gt;o</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Save as PDF</property><property name="accelerator">&lt;Control&gt;&lt;Shift&gt;s</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Close</property><property name="accelerator">Escape</property></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">View</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Bigger thumbnails</property><property name="accelerator">&lt;Control&gt;plus</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Smaller thumbnails</property><property name="accelerator">&lt;Control&gt;minus</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Show or hide settings</property><property name="accelerator">F9</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Keyboard shortcuts</property><property name="accelerator">&lt;Control&gt;question</property></object></child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkShortcutsGroup">
+            <property name="title">Page viewer</property>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Previous / next page</property><property name="accelerator">Left Right</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Zoom in / out</property><property name="accelerator">&lt;Control&gt;plus &lt;Control&gt;minus</property></object></child>
+            <child><object class="GtkShortcutsShortcut"><property name="title">Fit page</property><property name="accelerator">&lt;Control&gt;0</property></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>"#;
+
+pub fn show_shortcuts(parent: &gtk::Window) {
+    let builder = gtk::Builder::from_string(SHORTCUTS);
+    if let Some(window) = builder.object::<gtk::ShortcutsWindow>("shortcuts") {
+        window.set_transient_for(Some(parent));
+        window.present();
+    }
+}
+
+/// `args`: what main() was given, already checked: `[]`, `[FILE]` or `["--spool-job", JOB]`.
+///
+/// Only one Print Studio runs at a time. Starting it again (or the watcher
+/// opening a new job) hands the arguments to the running copy, which puts
+/// them in an empty window or asks whether to add them to the job on screen.
+pub fn run(args: Vec<String>) -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(APP_ID)
-        // Each print job gets its own window and process.
-        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
     app.connect_startup(|_| {
         tune_font_rendering();
         load_css();
+        add_icon_path();
     });
-    app.connect_activate(move |app| {
-        let win = window::Win::new(app, file.clone(), spool.clone());
-        win.present();
+    app.connect_command_line(|app, cmdline| {
+        let args: Vec<String> = cmdline.arguments().iter().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+        let item = match args.as_slice() {
+            [flag, job] if flag == "--spool-job" => Some(Incoming::Spool(SpoolJob::load(&PathBuf::from(job)))),
+            [file] => cmdline.create_file_for_arg(file).path().map(Incoming::File),
+            _ => None,
+        };
         #[cfg(feature = "devshot")]
-        if let Ok(script) = std::env::var("PRINTSTUDIO_DEVSCRIPT") {
+        if let (false, Ok(script)) = (cmdline.is_remote(), std::env::var("PRINTSTUDIO_DEVSCRIPT")) {
+            let win = window::Win::new(app, item);
+            win.present();
             win.run_dev_script(script);
+            return glib::ExitCode::SUCCESS;
         }
+        window::deliver(app, item);
+        glib::ExitCode::SUCCESS
     });
     app.set_accels_for_action("win.print", &["<Control>p"]);
     app.set_accels_for_action("win.open", &["<Control>o"]);
+    app.set_accels_for_action("win.save-pdf", &["<Control><Shift>s"]);
+    app.set_accels_for_action("win.toggle-sidebar", &["F9"]);
+    app.set_accels_for_action("win.shortcuts", &["<Control>question"]);
     app.set_accels_for_action("win.zoom-in", &["<Control>plus", "<Control>equal", "<Control>KP_Add"]);
     app.set_accels_for_action("win.zoom-out", &["<Control>minus", "<Control>KP_Subtract"]);
     app.set_accels_for_action("win.escape", &["Escape"]);
-    // Our own arguments were handled in main(); don't let GApplication see them.
-    app.run_with_args(&["printstudio"])
+    let mut argv = vec!["printstudio".to_string()];
+    argv.extend(args);
+    app.run_with_args(&argv)
 }

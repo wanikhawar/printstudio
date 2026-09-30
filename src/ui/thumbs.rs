@@ -128,11 +128,20 @@ impl Thumbs {
             if selectable {
                 overlay.add_overlay(&check_box(item, weak.clone()));
             }
+            // Caption: an optional badge ("Front 2") and the text ("pp. 3–4").
+            let caption = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            caption.set_halign(gtk::Align::Center);
+            let badge = gtk::Label::new(None);
+            badge.add_css_class("sheet-badge");
+            badge.set_visible(false);
             let label = gtk::Label::new(None);
             label.add_css_class("caption");
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            caption.append(&badge);
+            caption.append(&label);
+            card.add_css_class("thumb-card");
             card.append(&overlay);
-            card.append(&label);
+            card.append(&caption);
             item.set_child(Some(&card));
         });
         let weak = Rc::downgrade(&thumbs);
@@ -172,8 +181,28 @@ impl Thumbs {
         let overlay = card.first_child().and_downcast::<gtk::Overlay>().unwrap();
         let frame = overlay.child().and_downcast::<adw::Clamp>().unwrap();
         let picture = frame.child().and_downcast::<adw::Clamp>().and_then(|v| v.child()).and_downcast::<gtk::Picture>().unwrap();
-        let label = overlay.next_sibling().and_downcast::<gtk::Label>().unwrap();
-        label.set_text(&self.model.string(pos).unwrap_or_default());
+        let caption = overlay.next_sibling().unwrap();
+        let badge = caption.first_child().and_downcast::<gtk::Label>().unwrap();
+        let label = badge.next_sibling().and_downcast::<gtk::Label>().unwrap();
+        let text = self.model.string(pos).unwrap_or_default();
+        match text.split_once('\t') {
+            Some((b, rest)) => {
+                badge.set_text(b);
+                badge.set_visible(true);
+                for (class, prefix) in [("front", "Front"), ("back", "Back")] {
+                    if b.starts_with(prefix) {
+                        badge.add_css_class(class);
+                    } else {
+                        badge.remove_css_class(class);
+                    }
+                }
+                label.set_text(rest);
+            }
+            None => {
+                badge.set_visible(false);
+                label.set_text(&text);
+            }
+        }
         let entry = Card { pos, item: item.downgrade(), card: card.downgrade(), picture: picture.downgrade() };
         {
             let mut bound = self.bound.borrow_mut();
@@ -191,9 +220,11 @@ impl Thumbs {
         super::set_picture_size(&picture, w, h);
         if let Some(tex) = self.cache.borrow().get(&entry.pos) {
             picture.set_paintable(Some(tex));
+            picture.remove_css_class("pending");
             return;
         }
         picture.set_paintable(None::<&gdk::Paintable>);
+        picture.add_css_class("pending");
         self.pending.borrow_mut().push(entry.clone());
         schedule(&Rc::downgrade(self));
     }
@@ -253,6 +284,7 @@ impl Thumbs {
             });
             if let Some(tex) = tex {
                 picture.set_paintable(Some(&tex));
+                picture.remove_css_class("pending");
             }
             progress.rendered = true;
         }

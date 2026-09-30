@@ -24,6 +24,10 @@ echo "==> Installing the printstudio command"
 install -Dm755 "$TARGET/printstudio" "$BIN"
 
 echo "==> Adding the app launcher (Open with → Print Studio)"
+ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+install -Dm644 "$ROOT/data/icons/hicolor/scalable/apps/dev.printstudio.PrintStudio.svg" \
+    "$ICONS/scalable/apps/dev.printstudio.PrintStudio.svg"
+command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$ICONS" || true
 mkdir -p "$APPS"
 rm -f "$APPS/printstudio.desktop"  # name used by early versions
 sed "s|@BIN@|$BIN|" "$ROOT/data/dev.printstudio.PrintStudio.desktop" > "$APPS/dev.printstudio.PrintStudio.desktop"

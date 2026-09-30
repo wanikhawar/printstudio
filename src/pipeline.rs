@@ -2,14 +2,17 @@
 //! how many passes. Pure index arithmetic, no PDF code, so every ordering rule
 //! is easy to test.
 //!
-//! Order of operations: page ranges -> n-up (pages onto sides) -> odd/even
-//! (counted on output sides, like CUPS `page-set`) -> duplex padding ->
-//! copies/collate -> reverse.
+//! Order of operations: page ranges -> n-up or booklet imposition (pages
+//! onto sides) -> odd/even (counted on output sides, like CUPS `page-set`)
+//! -> duplex padding -> copies/collate -> reverse.
 
 use serde::{Deserialize, Serialize};
 
-/// Source page indices printed on one side of a sheet. Empty means blank.
+/// Source page indices printed on one side of a sheet, one per slot. Empty means blank.
 pub type Side = Vec<usize>;
+
+/// An empty slot on a side (booklets pad with these so every page keeps its place).
+pub const BLANK: usize = usize::MAX;
 
 pub const NUP_CHOICES: [usize; 6] = [1, 2, 4, 6, 9, 16];
 
@@ -85,6 +88,17 @@ pub struct JobOptions {
     pub duplex: bool,
     pub backs_reverse: bool,
     pub backs_rotate: bool,
+    /// Two pages side by side on each side of the sheet, ordered so the
+    /// folded stack reads as a booklet. Always printed two-sided.
+    pub booklet: bool,
+    /// Sheets folded together into one booklet; 0 puts every page in one.
+    pub booklet_sheets: u32,
+    /// Bound on the right, for right-to-left documents.
+    pub booklet_rtl: bool,
+    /// Extra space at the fold, in millimetres.
+    pub gutter_mm: f64,
+    /// With several documents in one job, start each on a fresh sheet.
+    pub separate_docs: bool,
 }
 
 impl Default for JobOptions {
@@ -102,7 +116,24 @@ impl Default for JobOptions {
             duplex: false,
             backs_reverse: false,
             backs_rotate: false,
+            booklet: false,
+            booklet_sheets: 0,
+            booklet_rtl: false,
+            gutter_mm: 0.0,
+            separate_docs: true,
         }
+    }
+}
+
+impl JobOptions {
+    /// Printed on both sides (booklets always are).
+    pub fn two_sided(&self) -> bool {
+        self.duplex || self.booklet
+    }
+
+    /// Source pages on each side of a sheet.
+    pub fn pages_per_side(&self) -> usize {
+        if self.booklet { 2 } else { self.nup }
     }
 }
 
@@ -162,24 +193,91 @@ pub fn format_ranges(pages: &[usize]) -> String {
 }
 
 pub fn plan(n_pages: usize, opts: &JobOptions) -> Result<Vec<Pass>, String> {
-    if layout(opts.nup).is_none() {
+    plan_docs(&[n_pages], opts)
+}
+
+/// Split `pages` (global indices) into runs that each stay within one document.
+fn split_by_doc(pages: &[usize], doc_pages: &[usize]) -> Vec<Vec<usize>> {
+    let mut starts = Vec::with_capacity(doc_pages.len());
+    let mut total = 0;
+    for n in doc_pages {
+        starts.push(total);
+        total += n;
+    }
+    let doc_of = |p: usize| starts.iter().rposition(|&s| s <= p).unwrap_or(0);
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut current = None;
+    for &p in pages {
+        let d = doc_of(p);
+        if current != Some(d) {
+            groups.push(Vec::new());
+            current = Some(d);
+        }
+        groups.last_mut().unwrap().push(p);
+    }
+    groups
+}
+
+/// Booklet imposition: pages in folding order, two per side, front then back
+/// of each sheet. Every `sheets_per` sheets (0: all of them) make one booklet.
+pub fn booklet_sides(pages: &[usize], sheets_per: usize, rtl: bool) -> Vec<Side> {
+    let per = if sheets_per == 0 { pages.len().max(1) } else { sheets_per * 4 };
+    let mut sides = Vec::new();
+    for chunk in pages.chunks(per) {
+        let mut p = chunk.to_vec();
+        while p.len() % 4 != 0 {
+            p.push(BLANK);
+        }
+        let n = p.len();
+        for i in 0..n / 4 {
+            // Outside of the sheet: the last page on the left, the first on the right.
+            let front = [p[n - 1 - 2 * i], p[2 * i]];
+            let back = [p[2 * i + 1], p[n - 2 - 2 * i]];
+            for [left, right] in [front, back] {
+                let side = if rtl { vec![right, left] } else { vec![left, right] };
+                sides.push(if side.iter().all(|&s| s == BLANK) { Vec::new() } else { side });
+            }
+        }
+    }
+    sides
+}
+
+/// Like `plan`, for several documents printed as one job. `doc_pages` holds
+/// each document's page count; page numbers run on across documents.
+pub fn plan_docs(doc_pages: &[usize], opts: &JobOptions) -> Result<Vec<Pass>, String> {
+    if !opts.booklet && layout(opts.nup).is_none() {
         return Err(format!("Unsupported pages per sheet: {}", opts.nup));
     }
+    let n_pages: usize = doc_pages.iter().sum();
     let pages = parse_ranges(&opts.page_ranges, n_pages)?;
-    let mut sides: Vec<Side> = pages.chunks(opts.nup).map(|c| c.to_vec()).collect();
-    sides = match opts.page_set {
-        PageSet::All => sides,
-        PageSet::Odd => sides.into_iter().step_by(2).collect(),
-        PageSet::Even => sides.into_iter().skip(1).step_by(2).collect(),
+    let duplex = opts.two_sided();
+    let mut sides: Vec<Side> = if opts.booklet {
+        booklet_sides(&pages, opts.booklet_sheets as usize, opts.booklet_rtl)
+    } else {
+        let groups = if opts.separate_docs && doc_pages.len() > 1 { split_by_doc(&pages, doc_pages) } else { vec![pages] };
+        let last = groups.len().saturating_sub(1);
+        let mut sides = Vec::new();
+        for (g, group) in groups.iter().enumerate() {
+            sides.extend(group.chunks(opts.nup).map(|c| c.to_vec()));
+            // The next document starts on the front of a new sheet.
+            if duplex && g < last && sides.len() % 2 == 1 {
+                sides.push(Vec::new());
+            }
+        }
+        match opts.page_set {
+            PageSet::All => sides,
+            PageSet::Odd => sides.into_iter().step_by(2).collect(),
+            PageSet::Even => sides.into_iter().skip(1).step_by(2).collect(),
+        }
     };
-    if sides.is_empty() {
+    if sides.iter().all(|s| s.is_empty()) {
         return Err("No pages selected".into());
     }
 
     // A unit is what must stay together when making copies: one side, or a
     // front/back pair when printing two-sided.
-    let per_unit = if opts.duplex { 2 } else { 1 };
-    if opts.duplex && sides.len() % 2 == 1 {
+    let per_unit = if duplex { 2 } else { 1 };
+    if duplex && sides.len() % 2 == 1 {
         sides.push(Vec::new());
     }
     let units: Vec<Vec<Side>> = sides.chunks(per_unit).map(|c| c.to_vec()).collect();
@@ -190,7 +288,7 @@ pub fn plan(n_pages: usize, opts: &JobOptions) -> Result<Vec<Pass>, String> {
         units.iter().flat_map(|u| std::iter::repeat_n(u.clone(), copies)).collect()
     };
 
-    if !opts.duplex {
+    if !duplex {
         let mut seq: Vec<Side> = units.into_iter().flatten().collect();
         if opts.reverse {
             seq.reverse();
@@ -205,10 +303,19 @@ pub fn plan(n_pages: usize, opts: &JobOptions) -> Result<Vec<Pass>, String> {
     if opts.backs_reverse {
         backs.reverse();
     }
+    // The calibration test sets up flipping portrait paper on its long edge.
+    // Booklet sheets are landscape on that paper and flip on their short
+    // edge, which is the same turn plus half a turn.
+    let rotate180 = opts.backs_rotate != opts.booklet;
     Ok(vec![
         Pass { sides: fronts, rotate180: false, label: "Front" },
-        Pass { sides: backs, rotate180: opts.backs_rotate, label: "Back" },
+        Pass { sides: backs, rotate180, label: "Back" },
     ])
+}
+
+/// The first real page anywhere in `sides` (for sizing blank sheets).
+pub fn first_page<'a>(sides: impl IntoIterator<Item = &'a Side>) -> Option<usize> {
+    sides.into_iter().flat_map(|s| s.iter()).copied().find(|&p| p != BLANK)
 }
 
 /// Every side of every pass, with the rotation it gets on paper.
@@ -223,23 +330,28 @@ pub fn flatten(passes: &[Pass], opts: &JobOptions) -> Vec<(Side, u32)> {
 }
 
 pub fn describe_side(side: &Side) -> String {
+    if side.contains(&BLANK) {
+        let parts: Vec<String> = side.iter().map(|&p| if p == BLANK { "blank".into() } else { format!("p. {}", p + 1) }).collect();
+        return parts.join(" + ");
+    }
     let nums: Vec<usize> = side.iter().map(|i| i + 1).collect();
     match nums.as_slice() {
         [] => "blank".into(),
         [one] => format!("p. {one}"),
         [first, .., last] if nums.windows(2).all(|w| w[1] == w[0] + 1) => format!("pp. {first}–{last}"),
-        _ => format!("pp. {}", nums.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")),
+        _ => format!("pp. {}", nums.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")),
     }
 }
 
-/// Thumbnail captions for the print preview, in print order.
+/// Thumbnail captions for the print preview, in print order:
+/// "<sheet>\t<pages>", e.g. "Front 2\tpp. 3–4".
 pub fn side_labels(passes: &[Pass], duplex: bool) -> Vec<String> {
     passes
         .iter()
         .flat_map(|p| {
             p.sides.iter().enumerate().map(move |(n, side)| {
                 let prefix = if duplex { format!("{} {}", p.label, n + 1) } else { format!("{}", n + 1) };
-                format!("{prefix} · {}", describe_side(side))
+                format!("{prefix}\t{}", describe_side(side))
             })
         })
         .collect()
@@ -331,11 +443,73 @@ mod tests {
         assert_eq!(order(&p, 1), vec![vec![2], vec![2], vec![4], vec![4]]);
     }
 
+    fn b(v: &[usize]) -> Vec<usize> {
+        // 1-based for readability, 0 for a blank slot
+        v.iter().map(|&p| if p == 0 { BLANK } else { p - 1 }).collect()
+    }
+
+    #[test]
+    fn booklet_imposition() {
+        let pages: Vec<usize> = (0..8).collect();
+        assert_eq!(booklet_sides(&pages, 0, false), vec![b(&[8, 1]), b(&[2, 7]), b(&[6, 3]), b(&[4, 5])]);
+        assert_eq!(booklet_sides(&pages, 0, true), vec![b(&[1, 8]), b(&[7, 2]), b(&[3, 6]), b(&[5, 4])]);
+        // 5 pages pad to 8 with blanks at the end of the booklet.
+        let five: Vec<usize> = (0..5).collect();
+        assert_eq!(booklet_sides(&five, 0, false), vec![b(&[0, 1]), b(&[2, 0]), b(&[0, 3]), b(&[4, 5])]);
+        // A single page: the back is completely blank.
+        assert_eq!(booklet_sides(&[0], 0, false), vec![b(&[0, 1]), vec![]]);
+        // Two booklets of one sheet each.
+        assert_eq!(booklet_sides(&pages, 1, false), vec![b(&[4, 1]), b(&[2, 3]), b(&[8, 5]), b(&[6, 7])]);
+    }
+
+    #[test]
+    fn booklet_passes() {
+        let o = JobOptions { booklet: true, ..opts() };
+        let p = plan(8, &o).unwrap();
+        assert_eq!(p.len(), 2, "always two-sided");
+        assert_eq!(order(&p, 0), vec![vec![8, 1], vec![6, 3]]);
+        assert_eq!(order(&p, 1), vec![vec![2, 7], vec![4, 5]]);
+        assert!(p[1].rotate180, "short-edge flip");
+        let o = JobOptions { booklet: true, backs_rotate: true, reverse: true, ..opts() };
+        let p = plan(8, &o).unwrap();
+        assert!(!p[1].rotate180);
+        assert_eq!(order(&p, 0), vec![vec![6, 3], vec![8, 1]]);
+        // n-up and odd/even don't apply to booklets.
+        let o = JobOptions { booklet: true, nup: 4, page_set: PageSet::Odd, ..opts() };
+        assert_eq!(plan(4, &o).unwrap()[0].sides.len(), 1);
+        // Copies keep each sheet's front and back together.
+        let o = JobOptions { booklet: true, copies: 2, ..opts() };
+        let p = plan(4, &o).unwrap();
+        assert_eq!(order(&p, 0), vec![vec![4, 1], vec![4, 1]]);
+        assert_eq!(order(&p, 1), vec![vec![2, 3], vec![2, 3]]);
+    }
+
+    #[test]
+    fn several_documents() {
+        // 3 + 2 pages, two-sided: the second document starts on a new sheet.
+        let o = JobOptions { duplex: true, ..opts() };
+        let p = plan_docs(&[3, 2], &o).unwrap();
+        assert_eq!(order(&p, 0), vec![vec![1], vec![3], vec![4]]);
+        assert_eq!(order(&p, 1), vec![vec![2], vec![], vec![5]]);
+        // Without separation they run on.
+        let o = JobOptions { duplex: true, separate_docs: false, ..opts() };
+        let p = plan_docs(&[3, 2], &o).unwrap();
+        assert_eq!(order(&p, 0), vec![vec![1], vec![3], vec![5]]);
+        // 2-up: documents don't share a sheet.
+        let o = JobOptions { nup: 2, ..opts() };
+        assert_eq!(order(&plan_docs(&[3, 2], &o).unwrap(), 0), vec![vec![1, 2], vec![3], vec![4, 5]]);
+        // Ranges count pages across documents.
+        let o = JobOptions { nup: 2, page_ranges: "3-4".into(), ..opts() };
+        assert_eq!(order(&plan_docs(&[3, 2], &o).unwrap(), 0), vec![vec![3], vec![4]]);
+        assert_eq!(split_by_doc(&[4, 0, 1], &[3, 2]), vec![vec![4], vec![0, 1]]);
+    }
+
     #[test]
     fn describe() {
+        assert_eq!(describe_side(&b(&[0, 3])), "blank + p. 3");
         assert_eq!(describe_side(&vec![0, 1, 2, 3]), "pp. 1–4");
         assert_eq!(describe_side(&vec![]), "blank");
-        assert_eq!(describe_side(&vec![0, 4]), "pp. 1,5");
+        assert_eq!(describe_side(&vec![0, 4]), "pp. 1, 5");
     }
 
     #[test]

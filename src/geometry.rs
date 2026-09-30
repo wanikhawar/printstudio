@@ -61,19 +61,23 @@ pub fn display_rotation(w: f64, h: f64, rotation: u32) -> Matrix {
     }
 }
 
+/// Points per millimetre.
+pub const PT_PER_MM: f64 = 72.0 / 25.4;
+
 /// A displayed page of size `page` (y up) -> its slot on an n-up sheet of size `paper` (y up),
-/// keeping `margin` points clear around the edge.
-pub fn place(slot: usize, nup: usize, paper: (f64, f64), margin: f64, page: (f64, f64)) -> Matrix {
+/// keeping `margin` points clear around the edge and `gap` points between columns.
+pub fn place(slot: usize, nup: usize, paper: (f64, f64), margin: f64, gap: f64, page: (f64, f64)) -> Matrix {
     let l = layout(nup).expect("valid n-up");
     let (pw, ph) = paper;
     // The usable area of the portrait sheet.
     let (aw, ah) = ((pw - 2.0 * margin).max(1.0), (ph - 2.0 * margin).max(1.0));
     let (cw, ch) = if l.landscape { (ah, aw) } else { (aw, ah) };
-    let (cell_w, cell_h) = (cw / l.cols as f64, ch / l.rows as f64);
+    let gap = gap.clamp(0.0, cw / 2.0);
+    let (cell_w, cell_h) = ((cw - gap * (l.cols - 1) as f64) / l.cols as f64, ch / l.rows as f64);
     let (w, h) = (page.0.max(1.0), page.1.max(1.0));
     let s = (cell_w / w).min(cell_h / h);
     let (col, row) = ((slot % l.cols) as f64, (slot / l.cols) as f64);
-    let x = col * cell_w + (cell_w - w * s) / 2.0;
+    let x = col * (cell_w + gap) + (cell_w - w * s) / 2.0;
     let y = ch - (row + 1.0) * cell_h + (cell_h - h * s) / 2.0;
     let m = Matrix::scale(s).then(Matrix::translate(x, y));
     let to_sheet = if l.landscape {
@@ -97,11 +101,20 @@ pub struct SheetLayout {
     pub margin: f64,
     pub orientation: Orientation,
     pub scaling: Scaling,
+    /// Space between the two halves of a booklet sheet, in points.
+    pub gutter: f64,
 }
 
 impl SheetLayout {
     pub fn new(job: &crate::pipeline::JobOptions, paper: Option<(f64, f64)>, margin: f64) -> SheetLayout {
-        SheetLayout { nup: job.nup, paper, margin, orientation: job.orientation, scaling: job.scaling }
+        SheetLayout {
+            nup: job.pages_per_side(),
+            paper,
+            margin,
+            orientation: job.orientation,
+            scaling: job.scaling,
+            gutter: if job.booklet { job.gutter_mm.max(0.0) * PT_PER_MM } else { 0.0 },
+        }
     }
 
     /// No paper to lay out on: 1-up pages print exactly as they are.
@@ -132,7 +145,7 @@ impl SheetLayout {
             return Matrix::IDENTITY;
         }
         if self.nup > 1 {
-            return place(slot, self.nup, sheet, self.margin, page);
+            return place(slot, self.nup, sheet, self.margin, self.gutter, page);
         }
         let (sw, sh) = sheet;
         let (w, h) = (page.0.max(1.0), page.1.max(1.0));
@@ -169,7 +182,7 @@ mod tests {
         let page = (612.0, 792.0);
         // Page 1 fills the left half of the landscape canvas; on the portrait
         // sheet that's the bottom half, with its top edge pointing left.
-        let m = place(0, 2, paper, 0.0, page);
+        let m = place(0, 2, paper, 0.0, 0.0, page);
         let (x, y) = m.apply(page.0 / 2.0, page.1 / 2.0);
         assert!(x > 0.0 && x < 612.0 && y > 0.0 && y < 396.0, "{x},{y}");
         let (_, top_y) = m.apply(0.0, page.1);
@@ -179,13 +192,13 @@ mod tests {
 
     #[test]
     fn four_up_grid() {
-        let m = place(3, 4, (595.0, 842.0), 0.0, (595.0, 842.0));
+        let m = place(3, 4, (595.0, 842.0), 0.0, 0.0, (595.0, 842.0));
         let (x, y) = m.apply(10.0, 10.0);
         assert!(x > 297.0 && y < 421.0, "slot 4 is bottom-right: {x},{y}");
     }
 
     fn a4(orientation: Orientation, scaling: Scaling) -> SheetLayout {
-        SheetLayout { nup: 1, paper: Some((595.0, 842.0)), margin: 9.0, orientation, scaling }
+        SheetLayout { nup: 1, paper: Some((595.0, 842.0)), margin: 9.0, orientation, scaling, gutter: 0.0 }
     }
 
     #[test]
@@ -214,6 +227,27 @@ mod tests {
         assert_eq!(small.apply(300.0, 400.0).0 - small.apply(0.0, 0.0).0, 300.0);
         let actual = a4(Orientation::Auto, Scaling::Actual).place(0, (842.0, 595.0), (1000.0, 700.0));
         assert_eq!(actual.apply(1000.0, 0.0).0 - actual.apply(0.0, 0.0).0, 1000.0);
+    }
+
+    #[test]
+    fn booklet_gutter_keeps_pages_off_the_fold() {
+        // Landscape canvas turned onto portrait A4: the fold runs across the paper at y = 421.
+        let gap = 20.0;
+        let left = place(0, 2, (595.0, 842.0), 0.0, gap, (595.0, 842.0));
+        let right = place(1, 2, (595.0, 842.0), 0.0, gap, (595.0, 842.0));
+        let ys = |m: Matrix| {
+            let (_, a) = m.apply(0.0, 0.0);
+            let (_, b) = m.apply(595.0, 842.0);
+            (a.min(b), a.max(b))
+        };
+        let (l0, l1) = ys(left);
+        let (r0, r1) = ys(right);
+        assert!(l0 >= 421.0 + gap / 2.0 - 1e-6 || l1 <= 421.0 - gap / 2.0 + 1e-6, "left half clear of the fold: {l0}..{l1}");
+        assert!(r0 >= 421.0 + gap / 2.0 - 1e-6 || r1 <= 421.0 - gap / 2.0 + 1e-6, "right half clear of the fold: {r0}..{r1}");
+        let job = crate::pipeline::JobOptions { booklet: true, gutter_mm: 10.0, nup: 4, ..Default::default() };
+        let l = SheetLayout::new(&job, Some((595.0, 842.0)), 0.0);
+        assert_eq!(l.nup, 2);
+        assert!((l.gutter - 28.3465).abs() < 1e-3);
     }
 
     #[test]

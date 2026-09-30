@@ -9,7 +9,7 @@ use gtk::{gdk, glib};
 
 use crate::geometry::{Matrix, SheetLayout, rotated_size};
 use crate::pipeline::{Orientation, Scaling};
-use crate::pipeline::Side;
+use crate::pipeline::{BLANK, Side};
 
 pub struct Source {
     pub doc: poppler::Document,
@@ -54,6 +54,7 @@ pub const AS_IS: SheetLayout = SheetLayout {
     margin: 0.0,
     orientation: Orientation::Auto,
     scaling: Scaling::Fit,
+    gutter: 0.0,
 };
 
 impl<'a> SheetSpec<'a> {
@@ -65,7 +66,7 @@ impl<'a> SheetSpec<'a> {
 
 /// Sheet size before the sheet's own rotation.
 fn sheet_size(src: &Source, spec: &SheetSpec) -> (f64, f64) {
-    let first = spec.side.first().and_then(|&i| src.sizes.get(i)).copied();
+    let first = spec.side.iter().find(|&&i| i != BLANK).and_then(|&i| src.sizes.get(i)).copied();
     spec.layout.sheet_size(first, spec.fallback)
 }
 
@@ -103,6 +104,9 @@ fn draw_sheet(cr: &cairo::Context, src: &Source, spec: &SheetSpec) {
     cr.rectangle(0.0, 0.0, sw, sh);
     cr.clip();
     for (slot, &idx) in spec.side.iter().enumerate() {
+        if idx == BLANK {
+            continue;
+        }
         let Some(page) = src.doc.page(idx as i32) else { continue };
         let (pw, ph) = src.sizes[idx];
         // poppler draws y-down; the shared geometry is y-up.
@@ -200,6 +204,9 @@ mod tests {
             (JobOptions { orientation: Orientation::Landscape, scaling: Scaling::Shrink, ..Default::default() }, a4, 9.0),
             (JobOptions { scaling: Scaling::Actual, rotate: 90, ..Default::default() }, letter, 9.0),
             (JobOptions { duplex: true, backs_rotate: true, ..Default::default() }, a4, 9.0),
+            // Booklets: blank slots, the gutter, and backs turned for a short-edge flip.
+            (JobOptions { booklet: true, gutter_mm: 8.0, ..Default::default() }, a4, 9.0),
+            (JobOptions { booklet: true, booklet_rtl: true, booklet_sheets: 1, backs_rotate: true, ..Default::default() }, letter, 0.0),
         ];
         for (n, (opts, paper, margin)) in cases.iter().enumerate() {
             let layout = SheetLayout::new(opts, *paper, *margin);
@@ -210,7 +217,7 @@ mod tests {
             doc.save(&out).unwrap();
             let printed = Source::open(&out).unwrap();
             assert_eq!(printed.n_pages(), sides.len());
-            let fallback = source.sizes[sides.iter().flat_map(|(s, _)| s).next().copied().unwrap_or(0)];
+            let fallback = source.sizes[crate::pipeline::first_page(sides.iter().map(|(s, _)| s)).unwrap_or(0)];
             for (i, (side, rot)) in sides.iter().enumerate() {
                 let spec = SheetSpec { side, rotation: *rot, layout, fallback };
                 let preview = render_sheet(&source, &spec, 400).unwrap();

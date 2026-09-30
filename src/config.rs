@@ -12,6 +12,8 @@ use crate::pipeline::JobOptions;
 
 /// Never carried over from one document to the next.
 const PER_DOCUMENT: [&str; 2] = ["page_ranges", "copies"];
+/// Chosen for one document at a time, but worth keeping in a preset.
+const PER_JOB: [&str; 1] = ["booklet"];
 /// Describe how the printer handles paper, so presets leave them alone.
 const PER_PRINTER: [&str; 2] = ["backs_reverse", "backs_rotate"];
 
@@ -120,7 +122,8 @@ impl Config {
 
     pub fn set_printer_settings(&mut self, printer: &str, job: &JobOptions, ppd: &PpdValues) {
         let entry = self.printer_entry(printer);
-        entry.insert("job".into(), job_map(job, &PER_DOCUMENT));
+        let skip: Vec<&str> = PER_DOCUMENT.iter().chain(PER_JOB.iter()).copied().collect();
+        entry.insert("job".into(), job_map(job, &skip));
         entry.insert("ppd".into(), json!(ppd));
     }
 
@@ -180,22 +183,24 @@ mod tests {
     #[test]
     fn printer_settings_round_trip_without_per_document_fields() {
         let mut cfg = temp_config("printer");
-        let job = JobOptions { copies: 5, page_ranges: "1-2".into(), nup: 4, backs_rotate: true, ..Default::default() };
+        let job = JobOptions { copies: 5, page_ranges: "1-2".into(), nup: 4, backs_rotate: true, booklet: true, ..Default::default() };
         let ppd = PpdValues::from([("BRResolution".to_string(), "PlainFast".to_string())]);
         cfg.set_printer_settings("P", &job, &ppd);
         cfg.save().unwrap();
         let (loaded, ppd2) = Config::load_from(cfg.path.clone()).printer_settings("P");
         assert_eq!((loaded.copies, loaded.page_ranges.as_str(), loaded.nup, loaded.backs_rotate), (1, "", 4, true));
+        assert!(!loaded.booklet, "a booklet is a choice for one document, not a printer default");
         assert_eq!(ppd2["BRResolution"], "PlainFast");
     }
 
     #[test]
     fn presets_leave_printer_handling_alone() {
         let mut cfg = temp_config("preset");
-        let job = JobOptions { nup: 2, backs_rotate: true, ..Default::default() };
+        let job = JobOptions { nup: 2, backs_rotate: true, booklet: true, ..Default::default() };
         cfg.set_preset("Draft", &job, &PpdValues::new());
         let (fields, _) = cfg.preset("Draft");
         assert!(!fields.contains_key("backs_rotate") && !fields.contains_key("copies"));
+        assert_eq!(fields["booklet"], true, "presets can make booklets");
         let base = JobOptions { backs_rotate: false, ..Default::default() };
         let merged = merge_job(&base, &fields);
         assert_eq!((merged.nup, merged.backs_rotate), (2, false));

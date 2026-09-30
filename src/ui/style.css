@@ -1,23 +1,61 @@
 /* Paper stays white in both light and dark mode: it's a print preview. */
 .page {
   background-color: white;
-  box-shadow: 0 1px 3px alpha(black, 0.35), 0 0 0 1px alpha(black, 0.08);
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 1px alpha(black, 0.06),
+    0 1px 2px alpha(black, 0.16),
+    0 4px 14px alpha(black, 0.10);
+  transition: box-shadow 200ms ease;
+}
+
+/* A page still being drawn: a soft pulse instead of a flat white box. */
+@keyframes paper-pulse {
+  from { background-color: white; }
+  to { background-color: #eceef2; }
+}
+
+.page.pending {
+  animation: paper-pulse 800ms ease-in-out infinite alternate;
+}
+
+/* The preview sits on a "desk", a shade darker than the settings. */
+.desk {
+  background-color: mix(@view_bg_color, @shade_color, 0.55);
 }
 
 gridview.thumbs {
   background: transparent;
-  padding: 6px;
+  padding: 18px 12px;
 }
 
 gridview.thumbs > child {
-  padding: 10px 8px 6px 8px;
-  margin: 2px;
-  border-radius: 12px;
+  padding: 12px 10px 8px 10px;
+  margin: 4px;
+  border-radius: 14px;
+  transition: background-color 150ms ease;
+}
+
+gridview.thumbs > child:hover {
+  background-color: alpha(currentColor, 0.05);
+}
+
+gridview.thumbs > child:hover .page {
+  box-shadow:
+    0 0 0 1px alpha(black, 0.06),
+    0 2px 4px alpha(black, 0.18),
+    0 10px 24px alpha(black, 0.16);
 }
 
 /* Selection is shown with the check box on each page, not a highlight. */
 gridview.thumbs > child:selected {
   background-color: transparent;
+}
+
+gridview.thumbs > child:selected .page {
+  box-shadow:
+    0 0 0 3px @accent_bg_color,
+    0 4px 14px alpha(black, 0.10);
 }
 
 /* The check box sits on white paper, so keep its empty ring visible in dark mode too. */
@@ -26,6 +64,85 @@ checkbutton.page-check check:not(:checked) {
   box-shadow: inset 0 0 0 2px alpha(black, 0.35);
 }
 
+.thumb-card .caption {
+  opacity: 0.75;
+}
+
+/* "Front 2", "Back 2", "13": which sheet or page a thumbnail is. */
+.sheet-badge {
+  font-size: 0.8em;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+  padding: 1px 8px;
+  border-radius: 99px;
+  color: @window_fg_color;
+  background-color: alpha(currentColor, 0.1);
+}
+
+.sheet-badge.front {
+  color: @accent_color;
+  background-color: alpha(@accent_bg_color, 0.14);
+}
+
+.sheet-badge.back {
+  color: @success_color;
+  background-color: alpha(@success_bg_color, 0.16);
+}
+
 .zoom-bar scale {
   min-width: 140px;
+}
+
+/* Files dragged over the window. */
+.drop-hover {
+  outline: 3px dashed @accent_bg_color;
+  outline-offset: -10px;
+  border-radius: 18px;
+  background-color: alpha(@accent_bg_color, 0.06);
+}
+
+/* Sidebar footer: how much paper, and the Print button. */
+.sidebar-footer {
+  padding: 14px 16px 16px 16px;
+}
+
+.paper-summary {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background-color: alpha(currentColor, 0.05);
+}
+
+.paper-summary .title-3 {
+  font-feature-settings: "tnum";
+}
+
+.paper-icon {
+  -gtk-icon-size: 24px;
+  color: @accent_color;
+  padding: 8px;
+  border-radius: 99px;
+  background-color: alpha(@accent_bg_color, 0.14);
+}
+
+.sidebar-footer button.pill {
+  padding: 8px 26px;
+}
+
+.note-card {
+  padding: 10px 14px;
+}
+
+.doc-row {
+  transition: background-color 150ms ease;
+}
+
+/* Numbered steps in the two-sided instructions. */
+.step-number {
+  font-weight: 700;
+  font-size: 0.85em;
+  min-width: 22px;
+  min-height: 22px;
+  border-radius: 99px;
+  color: @accent_fg_color;
+  background-color: @accent_bg_color;
 }

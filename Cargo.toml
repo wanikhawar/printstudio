@@ -1,8 +1,8 @@
 [package]
 name = "printstudio"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
-description = "One print dialog for every app: reverse order, collate, n-up, manual two-sided and every printer option."
+description = "One print dialog for every app: reverse order, collate, n-up, booklets, manual two-sided and every printer option."
 license = "MIT"
 
 [dependencies]

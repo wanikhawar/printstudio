@@ -1,6 +1,7 @@
-//! Background service (`printstudio watch`): opens a Print Studio window for
-//! every job the virtual printer captures. Polling once a second is cheap and
-//! needs no extra dependencies.
+//! Background service (`printstudio watch`): hands every job the virtual
+//! printer captures to Print Studio, which opens it in a window, or asks
+//! whether to add it to a job that's already open. Polling once a second is
+//! cheap and needs no extra dependencies.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

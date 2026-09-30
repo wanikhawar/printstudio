@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5e6b7d"/>
+      <stop offset="1" stop-color="#3d4756"/>
+    </linearGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7a8699"/>
+      <stop offset="1" stop-color="#5e6b7d"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef0f4"/>
+    </linearGradient>
+  </defs>
+  <!-- back sheet (the stack) -->
+  <rect x="34" y="10" width="54" height="66" rx="4" fill="#dfe3ea"/>
+  <!-- printed sheet -->
+  <g transform="rotate(-6 64 44)">
+    <rect x="38" y="14" width="54" height="66" rx="4" fill="url(#paper)" stroke="#c6ccd6" stroke-width="1"/>
+    <rect x="44" y="21" width="42" height="8" rx="2" fill="#3584e4"/>
+    <rect x="44" y="34" width="42" height="3" rx="1.5" fill="#9aa3b1"/>
+    <rect x="44" y="41" width="36" height="3" rx="1.5" fill="#9aa3b1"/>
+    <rect x="44" y="48" width="42" height="3" rx="1.5" fill="#9aa3b1"/>
+    <rect x="44" y="55" width="28" height="3" rx="1.5" fill="#9aa3b1"/>
+  </g>
+  <!-- printer body -->
+  <rect x="10" y="58" width="108" height="46" rx="12" fill="url(#body)"/>
+  <rect x="10" y="58" width="108" height="20" rx="10" fill="url(#front)"/>
+  <rect x="10" y="68" width="108" height="10" fill="url(#front)"/>
+  <!-- paper slot and output sheet -->
+  <rect x="28" y="84" width="72" height="8" rx="4" fill="#2a313c"/>
+  <path d="M34 88 h60 l-4 30 a4 4 0 0 1 -4 3.5 h-44 a4 4 0 0 1 -4 -3.5 z" fill="url(#paper)" stroke="#c6ccd6" stroke-width="1"/>
+  <!-- folded booklet on the output sheet -->
+  <path d="M50 97 l14 3 l14 -3 v17 l-14 3 l-14 -3 z" fill="#3584e4"/>
+  <path d="M64 100 v17" stroke="#1c5fb3" stroke-width="1.5"/>
+  <!-- status light -->
+  <circle cx="100" cy="68" r="3.5" fill="#57e389"/>
+  <rect x="10" y="58" width="108" height="46" rx="12" fill="none" stroke="#000" stroke-opacity="0.12"/>
+</svg>

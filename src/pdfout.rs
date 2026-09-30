@@ -12,7 +12,7 @@ use lopdf::xref::XrefType;
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
 
 use crate::geometry::{Matrix, SheetLayout, display_rotation, rotated_size};
-use crate::pipeline::{JobOptions, Pass, Side, flatten};
+use crate::pipeline::{BLANK, JobOptions, Pass, Side, first_page, flatten};
 
 const LETTER: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
 /// Catalog entries that point at the original pages and would keep them alive.
@@ -130,15 +130,15 @@ pub fn build(src: &Document, sides: &[(Side, u32)], layout: &SheetLayout, target
     if infos.is_empty() {
         return Err("The document has no pages".into());
     }
-    let first = sides.iter().flat_map(|(s, _)| s.iter()).next().copied().unwrap_or(0);
-    let fallback = infos[first].display_size();
+    let first = first_page(sides.iter().map(|(s, _)| s)).unwrap_or(0);
+    let fallback = infos.get(first).ok_or("Page out of range")?.display_size();
 
     let pages_id = doc.new_object_id();
     let mut kids: Vec<Object> = Vec::with_capacity(sides.len());
     let mut forms: HashMap<usize, ObjectId> = HashMap::new();
 
     for (side, rot) in sides {
-        let first_page = side.first().and_then(|&i| infos.get(i)).map(PageInfo::display_size);
+        let first_page = side.iter().find(|&&i| i != BLANK).and_then(|&i| infos.get(i)).map(PageInfo::display_size);
         let sheet = layout.sheet_size(first_page, fallback);
         let passthrough = layout.passthrough() && !side.is_empty();
         // The sheet as it looks on paper, then turned upright onto portrait paper.
@@ -167,6 +167,9 @@ pub fn build(src: &Document, sides: &[(Side, u32)], layout: &SheetLayout, target
             let mut ops = String::new();
             let mut xobjects = Dictionary::new();
             for (slot, &idx) in side.iter().enumerate() {
+                if idx == BLANK {
+                    continue;
+                }
                 let info = infos.get(idx).ok_or("Page out of range")?;
                 let form = match forms.get(&idx) {
                     Some(id) => *id,
@@ -228,6 +231,49 @@ pub fn build(src: &Document, sides: &[(Side, u32)], layout: &SheetLayout, target
 
 fn save(doc: &mut Document, path: &Path) -> Result<(), String> {
     doc.save(path).map(|_| ()).map_err(|e| format!("Couldn't write {}: {e}", path.display()))
+}
+
+/// Join several PDFs into one, in order (for jobs made of several documents).
+pub fn merge(sources: &[Document]) -> Result<Document, String> {
+    let mut out = Document::with_version("1.5");
+    let pages_id = out.new_object_id();
+    let mut kids: Vec<Object> = Vec::new();
+    for src in sources {
+        let mut doc = src.clone();
+        doc.renumber_objects_with(out.max_id + 1);
+        let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
+        // Pages inherit some attributes from the page tree we're about to
+        // drop, so give every page its own copy first.
+        let infos: Vec<PageInfo> = pages.iter().map(|id| page_info(&doc, *id)).collect::<Result<_, _>>()?;
+        out.max_id = out.max_id.max(doc.max_id);
+        out.objects.extend(doc.objects);
+        for info in infos {
+            let mut dict = info.dict;
+            dict.set("Parent", pages_id);
+            out.objects.insert(info.id, Object::Dictionary(dict));
+            kids.push(info.id.into());
+        }
+    }
+    if kids.is_empty() {
+        return Err("The documents have no pages".into());
+    }
+    let count = kids.len() as i64;
+    out.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }));
+    let catalog = out.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    out.trailer.set("Root", catalog);
+    // The old catalogs and page trees are no longer reachable.
+    out.prune_objects();
+    out.renumber_objects();
+    out.reference_table.cross_reference_type = XrefType::CrossReferenceTable;
+    Ok(out)
+}
+
+/// Merge PDF files into `dest`.
+pub fn merge_files(paths: &[PathBuf], dest: &Path) -> Result<(), String> {
+    let docs: Vec<Document> = paths.iter().map(|p| load(p)).collect::<Result<_, _>>()?;
+    let mut doc = merge(&docs)?;
+    doc.compress();
+    save(&mut doc, dest)
 }
 
 /// One PDF per pass, named `<stem>-<n>.pdf` in `dir`.
@@ -379,6 +425,25 @@ mod tests {
             doc.save_to(&mut bytes).unwrap();
             assert_xref_valid(&bytes);
         }
+    }
+
+    #[test]
+    fn merged_documents_keep_their_pages_in_order() {
+        let a = round_trip(numbered(3, A4));
+        // The second document keeps its paper size on the page tree, not the page.
+        let mut b = numbered(2, (612.0, 792.0));
+        let pages_root = b.catalog().unwrap().get(b"Pages").unwrap().as_reference().unwrap();
+        for id in b.get_pages().into_values() {
+            b.get_dictionary_mut(id).unwrap().remove(b"MediaBox");
+        }
+        b.get_dictionary_mut(pages_root).unwrap().set("MediaBox", vec![0.into(), 0.into(), 612.into(), 792.into()]);
+        let merged = round_trip(merge(&[a, round_trip(b)]).unwrap());
+        assert_eq!(texts(&merged), ["P1", "P2", "P3", "P1", "P2"]);
+        let fourth = merged.get_dictionary(*merged.get_pages().get(&4).unwrap()).unwrap();
+        assert_eq!(rect(&merged, fourth.get(b"MediaBox").unwrap()).unwrap(), [0.0, 0.0, 612.0, 792.0]);
+        // And it prints like any other document.
+        let o = JobOptions { booklet: true, ..opts() };
+        assert_eq!(texts(&out(&merged, &o, 0, Some(A4))).len(), 2);
     }
 
     #[test]
