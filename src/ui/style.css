@@ -1,0 +1,31 @@
+/* Paper stays white in both light and dark mode: it's a print preview. */
+.page {
+  background-color: white;
+  box-shadow: 0 1px 3px alpha(black, 0.35), 0 0 0 1px alpha(black, 0.08);
+}
+
+gridview.thumbs {
+  background: transparent;
+  padding: 6px;
+}
+
+gridview.thumbs > child {
+  padding: 10px 8px 6px 8px;
+  margin: 2px;
+  border-radius: 12px;
+}
+
+/* Selection is shown with the check box on each page, not a highlight. */
+gridview.thumbs > child:selected {
+  background-color: transparent;
+}
+
+/* The check box sits on white paper, so keep its empty ring visible in dark mode too. */
+checkbutton.page-check check:not(:checked) {
+  background-color: alpha(white, 0.9);
+  box-shadow: inset 0 0 0 2px alpha(black, 0.35);
+}
+
+.zoom-bar scale {
+  min-width: 140px;
+}

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Print Studio
+GenericName=Print Dialog
+Comment=Print anything with reverse order, collation, n-up, manual two-sided and more
+Exec=@BIN@ %f
+Icon=printer
+Terminal=false
+Categories=Utility;Office;
+StartupWMClass=dev.printstudio.PrintStudio
+MimeType=application/pdf;image/png;image/jpeg;image/tiff;image/gif;image/bmp;image/webp;text/plain;application/vnd.oasis.opendocument.text;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/msword;

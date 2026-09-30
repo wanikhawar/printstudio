@@ -1,0 +1,28 @@
+[package]
+name = "printstudio"
+version = "0.2.0"
+edition = "2024"
+description = "One print dialog for every app: reverse order, collate, n-up, manual two-sided and every printer option."
+license = "MIT"
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_5"] }
+gtk = { version = "0.11", package = "gtk4", features = ["v4_16"] }
+cairo-rs = { version = "0.22", features = ["pdf"] }
+poppler-rs = "0.26"
+lopdf = "0.45"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[features]
+# Development only: PRINTSTUDIO_DEVSCRIPT drives the window and saves screenshots.
+devshot = []
+

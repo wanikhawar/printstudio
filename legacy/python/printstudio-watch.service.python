@@ -1,0 +1,11 @@
+[Unit]
+Description=Print Studio: open the print dialog for jobs sent to the PrintStudio printer
+
+[Service]
+Environment=PYTHONPATH=@SRC@
+ExecStart=/usr/bin/python3 -m printstudio.watch
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
