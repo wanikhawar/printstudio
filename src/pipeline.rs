@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn python_config_compatible() {
+    fn reads_settings_saved_by_earlier_versions() {
         let json = r#"{"backs_reverse":false,"backs_rotate":true,"collate":true,"duplex":false,
             "fit_to_page":false,"nup":2,"page_set":"odd","reverse":true,"rotate":0}"#;
         let o: JobOptions = serde_json::from_str(json).unwrap();

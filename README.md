@@ -70,8 +70,6 @@ cargo run -- file.pdf
 `cargo build --features devshot` adds a scripting hook (`PRINTSTUDIO_DEVSCRIPT`) for
 driving the window and taking screenshots headlessly, e.g. under `gtk4-broadwayd`.
 
-The earlier Python/Qt version is kept in `legacy/python/` for reference.
-
 ## Troubleshooting
 
 - Nothing opens after printing to PrintStudio: `systemctl --user status printstudio-watch`

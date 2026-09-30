@@ -1,7 +1,7 @@
 //! Persistent settings: per-printer defaults, presets, window preferences.
 //!
 //! Stored as JSON in $XDG_CONFIG_HOME/printstudio/config.json, in the same
-//! format the Python version used, so existing settings carry over.
+//! format earlier versions used, so existing settings carry over.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -25,7 +25,7 @@ install -Dm755 "$TARGET/printstudio" "$BIN"
 
 echo "==> Adding the app launcher (Open with → Print Studio)"
 mkdir -p "$APPS"
-rm -f "$APPS/printstudio.desktop"  # from the Python version
+rm -f "$APPS/printstudio.desktop"  # name used by early versions
 sed "s|@BIN@|$BIN|" "$ROOT/data/dev.printstudio.PrintStudio.desktop" > "$APPS/dev.printstudio.PrintStudio.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
 
